@@ -1,0 +1,13 @@
+{
+  "name": "gps-tcp-server",
+  "version": "1.0.0",
+  "description": "TCP server for GPS trackers (GT06, VT100) - parse and forward to Laravel API",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "axios": "^1.13.2",
+    "dotenv": "^16.6.1"
+  }
+}
