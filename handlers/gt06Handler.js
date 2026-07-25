@@ -155,7 +155,6 @@ function extractSerial(hex) {
 
 module.exports.process = async (socket, buf, hex) => {
   try {
-    // === DEBUG LOGGING ===
     logger.info('=== RAW PACKET DEBUG ===');
     logger.info('FULL HEX:', hex);
     logger.info('HEX LENGTH (chars):', hex.length, '| BYTES:', hex.length / 2);
@@ -174,17 +173,9 @@ module.exports.process = async (socket, buf, hex) => {
     if (protocol === '01') { // login
       const imeiHex = hex.substring(8, 8 + 16);
       logger.info('GT06 login imeiHex=', imeiHex);
-      logger.info('FULL LOGIN PACKET HEX:', hex);
-
-      // Breakdown manual biar keliatan tiap bagian
-      logger.info('BREAKDOWN -> header:', hex.substring(0,4), 
-                  '| len:', hex.substring(4,6), 
-                  '| proto:', hex.substring(6,8), 
-                  '| imei:', hex.substring(8,24), 
-                  '| sisa (serial+crc+stop):', hex.substring(24));
 
       const serialHex = extractSerial(hex);
-      logger.info('EXTRACTED SERIAL (asumsi):', serialHex);
+      logger.info('EXTRACTED SERIAL:', serialHex);
 
       const ack = buildAck('01', serialHex);
       logger.info('ACK PACKET SENT:', ack.toString('hex'));
@@ -235,7 +226,6 @@ module.exports.process = async (socket, buf, hex) => {
       await locationService.postPosition(payload);
 
       const serialHex = extractSerial(hex);
-      logger.info('GPS ACK - EXTRACTED SERIAL:', serialHex);
       try {
         const ack = buildAck('22', serialHex);
         socket.write(ack);
@@ -250,7 +240,6 @@ module.exports.process = async (socket, buf, hex) => {
     if (protocol === '13' || protocol === '26') {
       logger.info('FULL HEARTBEAT/STATUS PACKET HEX:', hex);
       const serialHex = extractSerial(hex);
-      logger.info('HEARTBEAT ACK - EXTRACTED SERIAL:', serialHex);
       try {
         const ack = buildAck(protocol, serialHex);
         socket.write(ack);
@@ -261,7 +250,20 @@ module.exports.process = async (socket, buf, hex) => {
       return;
     }
 
-    logger.info('GT06: unsupported protocol', protocol, '| FULL HEX:', hex);
+    // protocol lain (misal 0x18 = LBS/multi-base-station, atau jenis lain yang belum di-parse penuh)
+    // tetap kirim generic ACK biar device nggak nganggep gagal & disconnect,
+    // walau data isinya belum kita proses/simpan sepenuhnya.
+    logger.info('GT06: unhandled protocol (sending generic ack)', protocol, '| FULL HEX:', hex);
+    try {
+      const serialHex = extractSerial(hex);
+      const ack = buildAck(protocol, serialHex);
+      socket.write(ack);
+      logger.info(`Generic ACK sent for protocol ${protocol}:`, ack.toString('hex'));
+    } catch (e) {
+      logger.error('Failed to send generic ack for protocol ' + protocol, e);
+    }
+    return;
+
   } catch (err) {
     logger.error('GT06 handler error', err);
   }
