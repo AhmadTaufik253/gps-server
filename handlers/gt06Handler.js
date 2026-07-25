@@ -153,6 +153,33 @@ function extractSerial(hex) {
   return hex.substring(hex.length - 12, hex.length - 8);
 }
 
+function extractImei(buf) {
+  const ascii = buf.toString();
+  const m = ascii.match(/(\d{10,16})/);
+  return m ? m[1] : 'unknown';
+}
+
+// Parser umum buat packet yang strukturnya kayak GPS (dipakai protocol 22 & 16)
+function parseGpsLikePacket(hex) {
+  const dateHex = hex.substring(8, 20);
+  const yy = parseInt(dateHex.substring(0, 2), 16) + 2000;
+  const mm = parseInt(dateHex.substring(2, 4), 16);
+  const dd = parseInt(dateHex.substring(4, 6), 16);
+  const hh = parseInt(dateHex.substring(6, 8), 16);
+  const mi = parseInt(dateHex.substring(8, 10), 16);
+  const ss = parseInt(dateHex.substring(10, 12), 16);
+  const device_time = `${yy}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')} ${String(hh).padStart(2,'0')}:${String(mi).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
+
+  const latHex = hex.substring(22, 30);
+  const lngHex = hex.substring(30, 38);
+  const lat = decodeCoordinate(latHex);
+  const lng = decodeCoordinate(lngHex);
+  const speed = hexToInt(hex.substring(38, 40));
+  const course = hexToInt(hex.substring(40, 44)) & 0x03FF;
+
+  return { device_time, lat, lng, speed, course };
+}
+
 module.exports.process = async (socket, buf, hex) => {
   try {
     logger.info('=== RAW PACKET DEBUG ===');
@@ -170,13 +197,12 @@ module.exports.process = async (socket, buf, hex) => {
 
     logger.info('HEADER:', header, '| LENGTH BYTE:', hex.substring(4, 6), '(=', length, ')', '| PROTOCOL:', protocol);
 
-    if (protocol === '01') { // login
+    // === LOGIN ===
+    if (protocol === '01') {
       const imeiHex = hex.substring(8, 8 + 16);
       logger.info('GT06 login imeiHex=', imeiHex);
 
       const serialHex = extractSerial(hex);
-      logger.info('EXTRACTED SERIAL:', serialHex);
-
       const ack = buildAck('01', serialHex);
       logger.info('ACK PACKET SENT:', ack.toString('hex'));
 
@@ -184,59 +210,41 @@ module.exports.process = async (socket, buf, hex) => {
       return;
     }
 
-    if (protocol === '22') { // GPS raw data
-      logger.info('FULL GPS PACKET HEX:', hex);
+    // === GPS DATA (22) & ALARM DATA (16, struktur mirip GPS) ===
+    if (protocol === '22' || protocol === '16') {
+      logger.info(`FULL PACKET HEX (protocol ${protocol}):`, hex);
 
-      const dateHex = hex.substring(8, 20);
-      const yy = parseInt(dateHex.substring(0, 2), 16) + 2000;
-      const mm = parseInt(dateHex.substring(2, 4), 16);
-      const dd = parseInt(dateHex.substring(4, 6), 16);
-      const hh = parseInt(dateHex.substring(6, 8), 16);
-      const mi = parseInt(dateHex.substring(8, 10), 16);
-      const ss = parseInt(dateHex.substring(10, 12), 16);
-      const device_time = `${yy}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')} ${String(hh).padStart(2,'0')}:${String(mi).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
+      const { device_time, lat, lng, speed, course } = parseGpsLikePacket(hex);
 
-      const latHex = hex.substring(22, 30);
-      const lngHex = hex.substring(30, 38);
+      logger.info(`PARSED (protocol ${protocol}) -> time:`, device_time, '| lat:', lat, '| lng:', lng, '| speed:', speed, '| course:', course);
 
-      const lat = decodeCoordinate(latHex);
-      const lng = decodeCoordinate(lngHex);
+      // cuma simpen kalau lat/lng masuk akal (bukan 0 / nilai aneh)
+      if (Math.abs(lat) > 0.001 && Math.abs(lng) > 0.001) {
+        const imei = extractImei(buf);
+        const payload = { imei, lat, lng, speed, course, device_time, raw: hex };
 
-      const speed = hexToInt(hex.substring(38, 40));
-      const course = hexToInt(hex.substring(40, 44)) & 0x03FF;
-
-      logger.info('PARSED -> time:', device_time, '| lat:', lat, '| lng:', lng, '| speed:', speed, '| course:', course);
-
-      let imei = null;
-      const ascii = buf.toString();
-      const m = ascii.match(/(\d{10,16})/);
-      if (m) imei = m[1];
-      if (!imei) imei = 'unknown';
-
-      const payload = {
-        imei,
-        lat,
-        lng,
-        speed,
-        course,
-        device_time,
-        raw: hex
-      };
-
-      await locationService.postPosition(payload);
+        try {
+          await locationService.postPosition(payload);
+          logger.info(`Posisi (protocol ${protocol}) berhasil dikirim ke Laravel`);
+        } catch (e) {
+          logger.error(`Gagal kirim posisi (protocol ${protocol}) ke Laravel`, e);
+        }
+      } else {
+        logger.info(`Lat/lng nggak valid buat protocol ${protocol}, skip simpan ke Laravel`);
+      }
 
       const serialHex = extractSerial(hex);
       try {
-        const ack = buildAck('22', serialHex);
+        const ack = buildAck(protocol, serialHex);
         socket.write(ack);
-        logger.info('GT06 GPS ACK sent:', ack.toString('hex'));
+        logger.info(`ACK sent for protocol ${protocol}:`, ack.toString('hex'));
       } catch (e) {
-        logger.error('Failed to send GPS ack', e);
+        logger.error(`Failed to send ack for protocol ${protocol}`, e);
       }
       return;
     }
 
-    // heartbeat / status (0x13, 0x26 dst)
+    // === HEARTBEAT / STATUS (13, 26) ===
     if (protocol === '13' || protocol === '26') {
       logger.info('FULL HEARTBEAT/STATUS PACKET HEX:', hex);
       const serialHex = extractSerial(hex);
@@ -250,9 +258,8 @@ module.exports.process = async (socket, buf, hex) => {
       return;
     }
 
-    // protocol lain (misal 0x18 = LBS/multi-base-station, atau jenis lain yang belum di-parse penuh)
-    // tetap kirim generic ACK biar device nggak nganggep gagal & disconnect,
-    // walau data isinya belum kita proses/simpan sepenuhnya.
+    // === PROTOCOL LAIN (misal 18 = LBS multi-base-station, 90 = info lain, dst) ===
+    // tetap kirim generic ACK biar device nggak nganggep gagal & disconnect
     logger.info('GT06: unhandled protocol (sending generic ack)', protocol, '| FULL HEX:', hex);
     try {
       const serialHex = extractSerial(hex);
