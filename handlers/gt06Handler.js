@@ -141,9 +141,7 @@ function crc16(buffer) {
   return (~crc) & 0xFFFF;
 }
 
-// Bangun ACK packet lengkap: 7878 + length + protocol + serial + crc + 0d0a
 function buildAck(protocolHex, serialHex) {
-  // content yang di-CRC: length(1B) + protocol(1B) + serial(2B)
   const contentHex = `05${protocolHex}${serialHex}`;
   const content = Buffer.from(contentHex, 'hex');
   const crc = crc16(content);
@@ -151,17 +149,17 @@ function buildAck(protocolHex, serialHex) {
   return Buffer.from(`7878${contentHex}${crcHex}0d0a`, 'hex');
 }
 
-// Ambil serial number (2 byte) dari packet asli.
-// Struktur umum: 7878 [len 1B] [proto 1B] [...content...] [serial 2B] [crc 2B] 0d0a
-// Serial selalu 2 byte SEBELUM crc(2B)+stop(2B), jadi hitung dari belakang.
 function extractSerial(hex) {
-  // hex.length total karakter; stop bit 0d0a = 4 hex char, crc = 4 hex char
-  // serial ada di 4 hex char sebelum crc
   return hex.substring(hex.length - 12, hex.length - 8);
 }
 
 module.exports.process = async (socket, buf, hex) => {
   try {
+    // === DEBUG LOGGING ===
+    logger.info('=== RAW PACKET DEBUG ===');
+    logger.info('FULL HEX:', hex);
+    logger.info('HEX LENGTH (chars):', hex.length, '| BYTES:', hex.length / 2);
+
     const header = hex.substring(0, 4);
     if (header !== '7878' && header !== '7979') {
       logger.debug('GT06: header mismatch');
@@ -171,19 +169,33 @@ module.exports.process = async (socket, buf, hex) => {
     const length = hexToInt(hex.substring(4, 6));
     const protocol = hex.substring(6, 8);
 
+    logger.info('HEADER:', header, '| LENGTH BYTE:', hex.substring(4, 6), '(=', length, ')', '| PROTOCOL:', protocol);
+
     if (protocol === '01') { // login
       const imeiHex = hex.substring(8, 8 + 16);
       logger.info('GT06 login imeiHex=', imeiHex);
+      logger.info('FULL LOGIN PACKET HEX:', hex);
+
+      // Breakdown manual biar keliatan tiap bagian
+      logger.info('BREAKDOWN -> header:', hex.substring(0,4), 
+                  '| len:', hex.substring(4,6), 
+                  '| proto:', hex.substring(6,8), 
+                  '| imei:', hex.substring(8,24), 
+                  '| sisa (serial+crc+stop):', hex.substring(24));
 
       const serialHex = extractSerial(hex);
-      const ack = buildAck('01', serialHex);
+      logger.info('EXTRACTED SERIAL (asumsi):', serialHex);
 
-      logger.debug('GT06 login ACK sent:', ack.toString('hex'));
+      const ack = buildAck('01', serialHex);
+      logger.info('ACK PACKET SENT:', ack.toString('hex'));
+
       socket.write(ack);
       return;
     }
 
     if (protocol === '22') { // GPS raw data
+      logger.info('FULL GPS PACKET HEX:', hex);
+
       const dateHex = hex.substring(8, 20);
       const yy = parseInt(dateHex.substring(0, 2), 16) + 2000;
       const mm = parseInt(dateHex.substring(2, 4), 16);
@@ -201,6 +213,8 @@ module.exports.process = async (socket, buf, hex) => {
 
       const speed = hexToInt(hex.substring(38, 40));
       const course = hexToInt(hex.substring(40, 44)) & 0x03FF;
+
+      logger.info('PARSED -> time:', device_time, '| lat:', lat, '| lng:', lng, '| speed:', speed, '| course:', course);
 
       let imei = null;
       const ascii = buf.toString();
@@ -220,32 +234,34 @@ module.exports.process = async (socket, buf, hex) => {
 
       await locationService.postPosition(payload);
 
-      // ACK GPS data pakai serial asli + CRC yang bener
       const serialHex = extractSerial(hex);
+      logger.info('GPS ACK - EXTRACTED SERIAL:', serialHex);
       try {
         const ack = buildAck('22', serialHex);
         socket.write(ack);
-        logger.debug('GT06 GPS ACK sent:', ack.toString('hex'));
+        logger.info('GT06 GPS ACK sent:', ack.toString('hex'));
       } catch (e) {
         logger.error('Failed to send GPS ack', e);
       }
       return;
     }
 
-    // heartbeat / status (0x13, 0x26 dst) -> reply ACK sesuai protokol yang sama
+    // heartbeat / status (0x13, 0x26 dst)
     if (protocol === '13' || protocol === '26') {
+      logger.info('FULL HEARTBEAT/STATUS PACKET HEX:', hex);
       const serialHex = extractSerial(hex);
+      logger.info('HEARTBEAT ACK - EXTRACTED SERIAL:', serialHex);
       try {
         const ack = buildAck(protocol, serialHex);
         socket.write(ack);
-        logger.debug(`GT06 heartbeat/status (${protocol}) ack sent:`, ack.toString('hex'));
+        logger.info(`GT06 heartbeat/status (${protocol}) ack sent:`, ack.toString('hex'));
       } catch (e) {
         logger.error('Failed to send heartbeat ack', e);
       }
       return;
     }
 
-    logger.debug('GT06: unsupported protocol', protocol);
+    logger.info('GT06: unsupported protocol', protocol, '| FULL HEX:', hex);
   } catch (err) {
     logger.error('GT06 handler error', err);
   }
