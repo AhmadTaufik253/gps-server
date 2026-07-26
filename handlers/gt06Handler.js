@@ -291,7 +291,6 @@ function decodeCoordinate(hex) {
   return lat;
 }
 
-// CRC16 ITU (X.25) - standar dipakai protokol GT06
 function crc16(buffer) {
   let crc = 0xFFFF;
   for (let i = 0; i < buffer.length; i++) {
@@ -319,12 +318,11 @@ function extractSerial(hex) {
   return hex.substring(hex.length - 12, hex.length - 8);
 }
 
-// IMEI GT06 disimpan 8 byte BCD (16 hex char) di login packet
 function decodeImeiBCD(imeiHex) {
-  return imeiHex.replace(/^0/, ''); // buang leading zero kalau ada
+  return imeiHex.replace(/^0/, '');
 }
 
-// Parser umum buat packet yang strukturnya kayak GPS (dipakai protocol 22 & 16)
+// Parser GPS: dipakai protocol 22, 16, dan 12 (struktur byte-nya sama)
 function parseGpsLikePacket(hex) {
   const dateHex = hex.substring(8, 20);
   const yy = parseInt(dateHex.substring(0, 2), 16) + 2000;
@@ -337,10 +335,20 @@ function parseGpsLikePacket(hex) {
 
   const latHex = hex.substring(22, 30);
   const lngHex = hex.substring(30, 38);
-  const lat = decodeCoordinate(latHex);
-  const lng = decodeCoordinate(lngHex);
+  let lat = decodeCoordinate(latHex);
+  let lng = decodeCoordinate(lngHex);
+
   const speed = hexToInt(hex.substring(38, 40));
-  const course = hexToInt(hex.substring(40, 44)) & 0x03FF;
+  const courseStatusHex = hex.substring(40, 44);
+  const courseStatus = hexToInt(courseStatusHex);
+
+  // bit hemisphere: 0x1000 = Selatan (lat negatif), 0x2000 = Barat (lng negatif)
+  const isSouth = (courseStatus & 0x1000) !== 0;
+  const isWest = (courseStatus & 0x2000) !== 0;
+  if (isSouth) lat = -Math.abs(lat);
+  if (isWest) lng = -Math.abs(lng);
+
+  const course = courseStatus & 0x03FF;
 
   return { device_time, lat, lng, speed, course };
 }
@@ -368,7 +376,6 @@ module.exports.process = async (socket, buf, hex) => {
       const imei = decodeImeiBCD(imeiHex);
       logger.info('GT06 login imei=', imei, '(raw hex:', imeiHex, ')');
 
-      // SIMPEN ke socket — dipakai semua packet berikutnya di koneksi ini
       socket.deviceImei = imei;
 
       const serialHex = extractSerial(hex);
@@ -379,15 +386,14 @@ module.exports.process = async (socket, buf, hex) => {
       return;
     }
 
-    // === GPS DATA (22) & ALARM DATA (16, struktur mirip GPS) ===
-    if (protocol === '22' || protocol === '16') {
+    // === GPS DATA: protocol 22 (standar), 16 (alarm), 12 (varian BT100-C) ===
+    if (protocol === '22' || protocol === '16' || protocol === '12') {
       logger.info(`FULL PACKET HEX (protocol ${protocol}):`, hex);
 
       const { device_time, lat, lng, speed, course } = parseGpsLikePacket(hex);
       logger.info(`PARSED (protocol ${protocol}) -> time:`, device_time, '| lat:', lat, '| lng:', lng, '| speed:', speed, '| course:', course);
 
       if (Math.abs(lat) > 0.001 && Math.abs(lng) > 0.001) {
-        // PAKAI imei dari socket (hasil login), BUKAN nebak dari regex
         const imei = socket.deviceImei;
 
         if (!imei) {
@@ -430,7 +436,7 @@ module.exports.process = async (socket, buf, hex) => {
       return;
     }
 
-    // === PROTOCOL LAIN (18 = LBS, 90 = status/config text, dst) ===
+    // === PROTOCOL LAIN (8a, 20, 18, 90, dst — LBS/config/status, bukan GPS) ===
     logger.info('GT06: unhandled protocol (sending generic ack)', protocol, '| FULL HEX:', hex);
     try {
       const asciiPreview = buf.toString('ascii').replace(/[^\x20-\x7E]/g, '.');
