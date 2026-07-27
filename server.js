@@ -50,6 +50,7 @@ const deviceService = require('./services/deviceService');
 const handlers = {
   gt06: require('./handlers/gt06Handler'),
   vt100: require('./handlers/vt100Handler'),
+  textImei: require('./handlers/textImeiHandler'),
   generic: require('./handlers/genericHandler'),
 };
 const logger = require('./utils/logger');
