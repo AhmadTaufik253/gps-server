@@ -32,66 +32,81 @@ const logger = require('../utils/logger');
 
 module.exports.process = async (socket, buf, hex) => {
   try {
-    if (buf.length < 2) {
-      logger.warn(`Buffer terlalu pendek: length=${buf.length}, hex=${hex}`);
-      return;
-    }
 
-    const lengthByte = buf.readUInt16BE(0);
-
-    // Heartbeat: length prefix = 0
-    if (lengthByte === 0) {
-      logger.info(
-        `Heartbeat dari ${socket.deviceImei || 'unknown'} | buf.length=${buf.length} | hex=${hex}`
-      );
-      socket.write(Buffer.from([0x01]));
-      return;
-    }
-
-    // Login IMEI: hanya diproses kalau socket ini belum punya IMEI
+    // ==========================
+    // LOGIN IMEI
+    // ==========================
     if (!socket.deviceImei) {
-      if (buf.length < 2 + lengthByte) {
-        logger.warn(
-          `Buffer lebih pendek dari length prefix. expected=${2 + lengthByte}, actual=${buf.length}, hex=${hex}`
-        );
+
+      if (buf.length < 4) {
+        logger.warn('Packet login terlalu pendek');
         return;
       }
 
-      const imei = buf.slice(2, 2 + lengthByte).toString('ascii');
+      const length = buf.readUInt16BE(0);
 
-      if (!/^\d{10,15}$/.test(imei)) {
-        logger.warn(`Format IMEI tidak valid: "${imei}", hex=${hex}`);
-        socket.write(Buffer.from([0x00])); // reject
+      if (buf.length < (2 + length)) {
+        logger.warn('Packet login tidak lengkap');
+        return;
+      }
+
+      const imei = buf.slice(2, 2 + length).toString('ascii');
+
+      if (!/^\d{10,17}$/.test(imei)) {
+        logger.warn(`IMEI tidak valid : ${imei}`);
+
+        socket.write(Buffer.from([0x00]));
+
         return;
       }
 
       socket.deviceImei = imei;
-      socket.device = {
-        imei,
-        connectedAt: new Date(),
-        ip: socket.remoteAddress,
-        port: socket.remotePort,
-      };
 
-      socket.write(Buffer.from([0x01])); // accept
-      logger.info(`Login sukses, IMEI = ${imei}`);
+      logger.info(`Login sukses : ${imei}`);
+
+      // ACK ACCEPT
+      socket.write(Buffer.from([0x01]));
+
       return;
     }
 
-    // Sudah login, length > 0 → kemungkinan paket data GPS
-    logger.info(
-      `Kemungkinan paket DATA dari ${socket.deviceImei} | buf.length=${buf.length} | lengthPrefix=${lengthByte} | hex=${hex}`
-    );
+    // ==========================
+    // AVL DATA
+    // ==========================
 
-    const payload = buf.slice(2, 2 + lengthByte);
-    logger.info(
-      `  payload ascii: ${payload.toString('ascii').replace(/[^\x20-\x7E]/g, '.')}`
-    );
+    logger.info('===============================');
+    logger.info(`AVL DATA dari ${socket.deviceImei}`);
+    logger.info(`Packet Length : ${buf.length}`);
 
-    // TODO: parsing struktur data GPS di sini setelah kita tau formatnya
-    // dari sample hex yang bakal muncul
+    const preamble = buf.readUInt32BE(0);
+    const dataLength = buf.readUInt32BE(4);
+    const codecId = buf.readUInt8(8);
+    const recordCount = buf.readUInt8(9);
+
+    logger.info(`Preamble     : ${preamble}`);
+    logger.info(`Data Length  : ${dataLength}`);
+    logger.info(`Codec ID     : 0x${codecId.toString(16)}`);
+    logger.info(`Record Count : ${recordCount}`);
+
+    logger.info(`HEX : ${hex.substring(0,120)}...`);
+
+    /**
+     * TODO:
+     * parser AVL di sini
+     */
+
+    // ACK AVL
+    const ack = Buffer.alloc(4);
+
+    ack.writeUInt32BE(recordCount, 0);
+
+    socket.write(ack);
+
+    logger.info(`ACK AVL (${recordCount}) dikirim`);
 
   } catch (err) {
-    logger.error('TextImei handler error', err);
+
+    logger.error(err);
+
   }
 };
