@@ -32,29 +32,36 @@ const logger = require('../utils/logger');
 
 module.exports.process = async (socket, buf, hex) => {
   try {
-    if (buf.length < 2) return;
-
-    const lengthByte = buf.readUInt16BE(0);
-
-    // Heartbeat: length prefix = 0, tanpa payload
-    if (lengthByte === 0) {
-      logger.info(`Heartbeat dari ${socket.deviceImei || 'unknown'}`);
-      socket.write(Buffer.from([0x01])); // ack heartbeat, konsisten dgn ack login
+    if (buf.length < 2) {
+      logger.warn(`Buffer terlalu pendek: length=${buf.length}, hex=${hex}`);
       return;
     }
 
-    // Login IMEI: hanya diproses kalau belum ada IMEI di socket ini
+    const lengthByte = buf.readUInt16BE(0);
+
+    // Heartbeat: length prefix = 0
+    if (lengthByte === 0) {
+      logger.info(
+        `Heartbeat dari ${socket.deviceImei || 'unknown'} | buf.length=${buf.length} | hex=${hex}`
+      );
+      socket.write(Buffer.from([0x01]));
+      return;
+    }
+
+    // Login IMEI: hanya diproses kalau socket ini belum punya IMEI
     if (!socket.deviceImei) {
       if (buf.length < 2 + lengthByte) {
-        logger.warn('Buffer lebih pendek dari length prefix');
+        logger.warn(
+          `Buffer lebih pendek dari length prefix. expected=${2 + lengthByte}, actual=${buf.length}, hex=${hex}`
+        );
         return;
       }
 
       const imei = buf.slice(2, 2 + lengthByte).toString('ascii');
 
       if (!/^\d{10,15}$/.test(imei)) {
-        logger.warn('Format IMEI tidak valid:', imei);
-        socket.write(Buffer.from([0x00]));
+        logger.warn(`Format IMEI tidak valid: "${imei}", hex=${hex}`);
+        socket.write(Buffer.from([0x00])); // reject
         return;
       }
 
@@ -63,17 +70,26 @@ module.exports.process = async (socket, buf, hex) => {
         imei,
         connectedAt: new Date(),
         ip: socket.remoteAddress,
-        port: socket.remotePort
+        port: socket.remotePort,
       };
 
-      socket.write(Buffer.from([0x01]));
+      socket.write(Buffer.from([0x01])); // accept
       logger.info(`Login sukses, IMEI = ${imei}`);
       return;
     }
 
-    // Kalau sudah login tapi length > 0, ini kemungkinan paket data GPS
-    logger.info('Kemungkinan paket data GPS (HEX):', hex);
-    // TODO: parsing GPS data di sini, format masih perlu direverse-engineer
+    // Sudah login, length > 0 → kemungkinan paket data GPS
+    logger.info(
+      `Kemungkinan paket DATA dari ${socket.deviceImei} | buf.length=${buf.length} | lengthPrefix=${lengthByte} | hex=${hex}`
+    );
+
+    const payload = buf.slice(2, 2 + lengthByte);
+    logger.info(
+      `  payload ascii: ${payload.toString('ascii').replace(/[^\x20-\x7E]/g, '.')}`
+    );
+
+    // TODO: parsing struktur data GPS di sini setelah kita tau formatnya
+    // dari sample hex yang bakal muncul
 
   } catch (err) {
     logger.error('TextImei handler error', err);
