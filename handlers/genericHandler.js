@@ -173,6 +173,10 @@ module.exports.process = async (socket, buf, hex) => {
          */
 
         try {
+            // baru
+            console.log("=========== PAYLOAD ===========");
+            console.log(JSON.stringify(payload, null, 2));
+            console.log("===============================");
 
             const result = await apiService.postPosition(payload);
 

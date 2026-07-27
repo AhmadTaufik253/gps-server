@@ -52,6 +52,21 @@ exports.parse = (buf) => {
         const speed = buf.readUInt16BE(offset);
         offset += 2;
 
+        console.log("========== GPS ==========");
+        console.log("Offset GPS :", offset);
+
+        console.log("Raw Longitude :", buf.readInt32BE(recordStart + 9));
+        console.log("Raw Latitude  :", buf.readInt32BE(recordStart + 13));
+
+        console.log("Longitude :", longitude);
+        console.log("Latitude  :", latitude);
+
+        console.log(
+            `Google Maps : https://maps.google.com/?q=${latitude},${longitude}`
+        );
+
+        console.log("=========================");
+
         console.log({
             timestampHex: buf.slice(recordStart, recordStart + 8).toString("hex"),
             priorityHex: buf.slice(recordStart + 8, recordStart + 9).toString("hex"),
@@ -144,6 +159,24 @@ exports.parse = (buf) => {
         }
 
         console.log("IO :", io);
+
+        // baru
+        console.log("Offset Setelah IO :", offset);
+        console.log("Packet Length :", buf.length);
+
+        console.log("Record yang akan dikirim:");
+
+        console.log({
+            timestamp: new Date(timestamp).toISOString(),
+            latitude,
+            longitude,
+            speed,
+            satellites,
+            battery: io[67],
+            voltage: io[66],
+            gsm: io[21],
+            ignition: io[239]
+        });
 
         records.push({
             timestamp,
