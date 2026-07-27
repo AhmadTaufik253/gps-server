@@ -29,13 +29,16 @@
 // };
 
 const logger = require('../utils/logger');
+const codec8Parser = require('../services/codec8Parser');
 
 module.exports.process = async (socket, buf, hex) => {
   try {
 
-    // ==========================
-    // LOGIN IMEI
-    // ==========================
+    /**
+     * ============================
+     * LOGIN IMEI
+     * ============================
+     */
     if (!socket.deviceImei) {
 
       if (buf.length < 4) {
@@ -64,19 +67,20 @@ module.exports.process = async (socket, buf, hex) => {
 
       logger.info(`Login sukses : ${imei}`);
 
-      // ACK ACCEPT
+      // ACK Login
       socket.write(Buffer.from([0x01]));
 
       return;
     }
 
-    // ==========================
-    // AVL DATA
-    // ==========================
+    /**
+     * ============================
+     * AVL DATA
+     * ============================
+     */
 
-    logger.info('===============================');
+    logger.info('======================================');
     logger.info(`AVL DATA dari ${socket.deviceImei}`);
-    logger.info(`Packet Length : ${buf.length}`);
 
     const preamble = buf.readUInt32BE(0);
     const dataLength = buf.readUInt32BE(4);
@@ -85,17 +89,31 @@ module.exports.process = async (socket, buf, hex) => {
 
     logger.info(`Preamble     : ${preamble}`);
     logger.info(`Data Length  : ${dataLength}`);
-    logger.info(`Codec ID     : 0x${codecId.toString(16)}`);
+    logger.info(`Codec ID     : ${codecId}`);
     logger.info(`Record Count : ${recordCount}`);
 
-    logger.info(`HEX : ${hex.substring(0,120)}...`);
+    // Parse AVL
+    const records = codec8Parser.parse(buf);
+
+    logger.info(`Total Record Parsed : ${records.length}`);
+
+    records.forEach((record, index) => {
+
+      logger.info(`========== RECORD ${index + 1} ==========`);
+
+      logger.info(record);
+
+      /**
+       * TODO
+       * Simpan ke database
+       */
+      // await gpsRepository.insert(record);
+
+    });
 
     /**
-     * TODO:
-     * parser AVL di sini
+     * ACK AVL
      */
-
-    // ACK AVL
     const ack = Buffer.alloc(4);
 
     ack.writeUInt32BE(recordCount, 0);
