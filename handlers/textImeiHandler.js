@@ -2,39 +2,77 @@ const logger = require('../utils/logger');
 
 module.exports.process = async (socket, buf, hex) => {
   try {
-    logger.info('TextImei FULL HEX:', hex);
-    logger.info('TextImei FULL LENGTH:', buf.length, 'bytes');
+    logger.info('========== TEXT IMEI LOGIN ==========');
+    logger.info('FULL HEX :', hex);
+    logger.info('FULL LENGTH :', buf.length, 'bytes');
 
+    // Ambil panjang IMEI
     const lengthByte = buf.readUInt16BE(0);
-    logger.info('TextImei length prefix:', lengthByte);
 
-    const imei = buf.slice(2, 2 + lengthByte).toString('ascii');
-    logger.info('TextImei: IMEI terdeteksi =', imei);
+    logger.info('Length Prefix :', lengthByte);
 
-    const remaining = buf.slice(2 + lengthByte);
-    if (remaining.length > 0) {
-      logger.info('TextImei: SISA BYTES setelah IMEI (hex):', remaining.toString('hex'));
-      logger.info('TextImei: SISA BYTES setelah IMEI (ascii):', remaining.toString('ascii').replace(/[^\x20-\x7E]/g, '.'));
+    // Validasi sederhana
+    if (lengthByte <= 0 || lengthByte > 20) {
+      logger.warn('Length IMEI tidak valid');
+      return;
     }
 
-    socket.deviceImei = imei;
-    // socket.write(Buffer.from('OK\r\n'));
+    // Ambil IMEI
+    const imei = buf.slice(2, 2 + lengthByte).toString('ascii');
 
-    // Coba tanpa \r\n
+    logger.info('IMEI :', imei);
+
+    socket.deviceImei = imei;
+
+    /**
+     * Kalau ada sisa packet setelah IMEI
+     */
+    const remaining = buf.slice(2 + lengthByte);
+
+    if (remaining.length > 0) {
+
+      logger.info('===== EXTRA DATA =====');
+
+      logger.info(
+        'HEX   :',
+        remaining.toString('hex')
+      );
+
+      logger.info(
+        'ASCII :',
+        remaining
+          .toString('ascii')
+          .replace(/[^\x20-\x7E]/g, '.')
+      );
+
+      /**
+       * Nanti di sini kita parsing GPS / Heartbeat
+       */
+      socket.lastRemainingPacket = remaining;
+    }
+
+    /**
+     * Simpan ke socket
+     */
+    socket.device = {
+      imei,
+      connectedAt: new Date(),
+      ip: socket.remoteAddress,
+      port: socket.remotePort
+    };
+
+    /**
+     * ACK
+     *
+     * Sementara kirim SATU ACK saja.
+     */
     socket.write(Buffer.from('OK'));
 
-    // Atau coba echo balik length+IMEI yang sama persis (device kadang expect echo)
-    socket.write(buf);
+    logger.info(`ACK sent to ${imei}`);
 
-    // Atau coba format ack ala length-prefix juga (mirroring gaya packet asli)
-    const ackMsg = 'OK';
-    const ackBuf = Buffer.alloc(2 + ackMsg.length);
-    ackBuf.writeUInt16BE(ackMsg.length, 0);
-    ackBuf.write(ackMsg, 2, 'ascii');
-    socket.write(ackBuf);
-
-    logger.info('TextImei: ACK dikirim: OK\\r\\n');
   } catch (err) {
+
     logger.error('TextImei handler error', err);
+
   }
 };
