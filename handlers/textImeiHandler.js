@@ -4,56 +4,36 @@ module.exports.process = async (socket, buf, hex) => {
   try {
     logger.info('========== TEXT IMEI LOGIN ==========');
     logger.info('FULL HEX :', hex);
-    logger.info('FULL LENGTH :', buf.length, 'bytes');
 
-    // Ambil panjang IMEI
-    const lengthByte = buf.readUInt16BE(0);
-
-    logger.info('Length Prefix :', lengthByte);
-
-    // Validasi sederhana
-    if (lengthByte <= 0 || lengthByte > 20) {
-      logger.warn('Length IMEI tidak valid');
+    if (buf.length < 2) {
+      logger.warn('Buffer terlalu pendek');
       return;
     }
 
-    // Ambil IMEI
+    const lengthByte = buf.readUInt16BE(0);
+
+    if (lengthByte <= 0 || lengthByte > 20) {
+      logger.warn('Length IMEI tidak valid:', lengthByte);
+      socket.write(Buffer.from([0x00])); // reject
+      return;
+    }
+
+    if (buf.length < 2 + lengthByte) {
+      logger.warn('Buffer lebih pendek dari length prefix');
+      return;
+    }
+
     const imei = buf.slice(2, 2 + lengthByte).toString('ascii');
+
+    if (!/^\d{10,15}$/.test(imei)) {
+      logger.warn('Format IMEI tidak valid:', imei);
+      socket.write(Buffer.from([0x00])); // reject
+      return;
+    }
 
     logger.info('IMEI :', imei);
 
     socket.deviceImei = imei;
-
-    /**
-     * Kalau ada sisa packet setelah IMEI
-     */
-    const remaining = buf.slice(2 + lengthByte);
-
-    if (remaining.length > 0) {
-
-      logger.info('===== EXTRA DATA =====');
-
-      logger.info(
-        'HEX   :',
-        remaining.toString('hex')
-      );
-
-      logger.info(
-        'ASCII :',
-        remaining
-          .toString('ascii')
-          .replace(/[^\x20-\x7E]/g, '.')
-      );
-
-      /**
-       * Nanti di sini kita parsing GPS / Heartbeat
-       */
-      socket.lastRemainingPacket = remaining;
-    }
-
-    /**
-     * Simpan ke socket
-     */
     socket.device = {
       imei,
       connectedAt: new Date(),
@@ -61,18 +41,11 @@ module.exports.process = async (socket, buf, hex) => {
       port: socket.remotePort
     };
 
-    /**
-     * ACK
-     *
-     * Sementara kirim SATU ACK saja.
-     */
-    socket.write(Buffer.from('OK'));
-
-    logger.info(`ACK sent to ${imei}`);
+    // ACK login gaya Teltonika: 1 byte
+    socket.write(Buffer.from([0x01]));
+    logger.info(`ACK login (0x01) dikirim ke ${imei}`);
 
   } catch (err) {
-
     logger.error('TextImei handler error', err);
-
   }
 };
