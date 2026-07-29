@@ -52,7 +52,7 @@ function parsePacket(raw) {
   const expectedChecksum = calcChecksum(raw.slice(0, -2));
 
   if (expectedChecksum !== checksum) {
-      logger.warn(
+      logger.info(
           `Checksum mismatch. packet=${checksum} expected=${expectedChecksum}`
       );
   }
@@ -113,7 +113,7 @@ module.exports.process = async (socket, buf, hex) => {
       socket._vt100Buffer = socket._vt100Buffer.slice(idx + 2);
 
       if (!rawPacket.startsWith('&&')) {
-        logger.warn('VT100: paket tidak diawali &&, dilewati:', rawPacket);
+        logger.info('VT100: paket tidak diawali &&, dilewati:', rawPacket);
         continue;
       }
 
@@ -183,7 +183,7 @@ module.exports.process = async (socket, buf, hex) => {
           logger.error(err);
         }
       } else {
-        logger.warn(`VT100: fix GPS belum valid dari ${parsed.id}, data posisi dilewati`);
+        logger.info(`VT100: fix GPS belum valid dari ${parsed.id}, data posisi dilewati`);
       }
 
       // --- ACK wajib untuk cmd 010 (data) dan 020 (compressed data) ---
