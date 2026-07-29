@@ -135,7 +135,7 @@ module.exports.process = async (socket, buf, hex) => {
       logger.info(
         `VT100 dari ${parsed.id} | cmd=${parsed.cmd} | lat=${parsed.latitude}, lon=${parsed.longitude}, speed=${parsed.speed}, course=${parsed.course}`
       );
-
+ 
       socket.deviceImei = parsed.id;
 
       if (parsed.fixFlag && !isNaN(parsed.latitude) && !isNaN(parsed.longitude)) {
