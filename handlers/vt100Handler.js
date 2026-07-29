@@ -153,6 +153,7 @@ module.exports.process = async (socket, buf, hex) => {
         //   raw: parsed.raw,
         // });
         try {
+          logger.info("Sending position to Laravel...");
           await locationService.postPosition({
             imei: parsed.id,
             records: [
